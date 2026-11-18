@@ -1,0 +1,48 @@
+# TEMPLATE for the PRIVATE inbox repo. Manual check that the GitHub App can do what the
+# souvenir workflow needs on the content repo, without publishing anything:
+#   - a token with contents/pull-requests/issues write can be minted for both repos
+#     (minting fails if the installation lacks any of them or a repo isn't included)
+#   - the content repo is readable
+#   - a branch can be created and is deleted again right away
+name: app-check
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: config
+        id: cfg
+        env:
+          CONTENT_REPO: ${{ vars.RECESS_CONTENT_REPO }}
+        run: |
+          echo "$CONTENT_REPO" | grep -Eq '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$'
+          echo "owner=${CONTENT_REPO%%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${CONTENT_REPO##*/}" >> "$GITHUB_OUTPUT"
+      - uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        id: app
+        with:
+          app-id: ${{ vars.RECESS_APP_ID }}
+          private-key: ${{ secrets.RECESS_APP_KEY }}
+          owner: ${{ steps.cfg.outputs.owner }}
+          repositories: ${{ steps.cfg.outputs.name }},${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      - name: checks
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          CONTENT_REPO: ${{ vars.RECESS_CONTENT_REPO }}
+        run: |
+          set -euo pipefail
+          echo "token minted with contents/pull-requests/issues: write"
+          echo "installation repositories:"; gh api installation/repositories -q '.repositories[].full_name' | sed 's/^/  /'
+          sha=$(gh api "repos/$CONTENT_REPO/commits/main" -q .sha); echo "read main: $sha"
+          branch="app-check-$GITHUB_RUN_ID"
+          gh api -X POST "repos/$CONTENT_REPO/git/refs" -f ref="refs/heads/$branch" -f sha="$sha" -q .ref
+          gh api -X DELETE "repos/$CONTENT_REPO/git/refs/heads/$branch"
+          if gh api "repos/$CONTENT_REPO/git/refs/heads/$branch" >/dev/null 2>&1; then echo "::error::branch still there"; exit 1; fi
+          echo "branch $branch created and deleted"
+          echo "ok"

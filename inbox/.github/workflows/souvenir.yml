@@ -13,6 +13,8 @@
 #   RECESS_CONTENT_REPO   "<owner>/recess", the public content repo
 #   RECESS_BOT_LOGIN      the App's bot login, "<app-slug>[bot]"
 #   RECESS_APP_ID         GitHub App id
+#   RECESS_DRY_RUN        "true" → run everything, but on merge stop after a local commit and a
+#                         `git push --dry-run` (auth check, writes nothing); the issue goes to needs-human.
 # Secrets: RECESS_APP_KEY (App private key), TYPESAFE_API_KEY (Jev ants).
 #   Only if rules/ants.yaml adds a workers-ai ant: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_AI_TOKEN.
 #
@@ -94,6 +96,7 @@ jobs:
           ISSUE: ${{ github.event.issue.number }}
           DECISION: ${{ steps.ants.outputs.decision }}
           SID: ${{ steps.ants.outputs.id }}
+          DRY_RUN: ${{ vars.RECESS_DRY_RUN }}
         run: |
           set -euo pipefail
           R="$RUNNER_TEMP/report.json"
@@ -117,6 +120,14 @@ jobs:
               bun test
               git add "content/moments/$SID.yaml"
               git commit -m "souvenir: $SID"
+              if [ "$DRY_RUN" = "true" ]; then
+                # Proves push access (receive-pack needs write auth) without creating anything public.
+                git push --dry-run origin "souvenir/$SID"
+                gh label create dry-run --repo "$INBOX" --force --color ededed --description "Reviewed in dry-run mode"
+                gh issue comment "$ISSUE" --repo "$INBOX" --body "dry-run：会收进大家的时刻（$SID），push 权限检查通过；没有推送、没有开 PR。$summary"
+                gh issue edit "$ISSUE" --repo "$INBOX" --remove-label pending --add-label needs-human --add-label dry-run
+                exit 0
+              fi
               git push origin "souvenir/$SID"
               PR=$(gh pr create --repo "$CONTENT_REPO" --head "souvenir/$SID" --title "souvenir: $SID" \
                 --body "Souvenir $SID passed the hard rules and ant review. $summary" | grep -oE '[0-9]+$')
