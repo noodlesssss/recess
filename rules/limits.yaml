@@ -1,0 +1,5 @@
+# 长度上限（单位：字符，按 Unicode code point 数）。
+# 设计稿写的是中文的「字」。英文/日文同样的信息量要更多字符，所以单独给上限。
+zh: { title: 30, field: 200, total: 500 }
+ja: { title: 40, field: 260, total: 650 }
+en: { title: 80, field: 600, total: 1500 }

@@ -1,0 +1,93 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+# Third-party actions are pinned to commit SHAs; the comment says which release.
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: bun run validate # hard rules over content/** (prints only path/field/code)
+      - run: bun run build:content
+      - run: bun run typecheck
+      - run: bun test
+
+  # Moments only enter through the souvenir review: a PR that adds or edits content/moments/**
+  # must come from a souvenir/* branch of this repository, and such a branch may touch nothing else.
+  content-origin:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only "$BASE" "$HEAD")
+          # Removing a moment (a maintainer withdrawing it) is allowed from any branch; adding or editing is not.
+          added=$(git diff --name-only --diff-filter=ACMRT "$BASE" "$HEAD")
+          from_souvenir=false
+          if [ "$HEAD_REPO" = "$THIS_REPO" ] && [[ "$HEAD_REF" == souvenir/* ]]; then from_souvenir=true; fi
+          if echo "$added" | grep -q '^content/moments/' && [ "$from_souvenir" != true ]; then
+            echo "::error::content/moments/ can only change through the souvenir review (a souvenir/* branch of this repo)."
+            exit 1
+          fi
+          if [ "$from_souvenir" = true ] && echo "$changed" | grep -vqE '^content/moments/s-[0-9]{8}-[0-9a-f]{8}\.yaml$'; then
+            echo "::error::souvenir/* branches may only add content/moments/s-YYYYMMDD-xxxxxxxx.yaml"
+            exit 1
+          fi
+          echo "ok"
+
+  # Deploys every push to main once `check` passes (including merged souvenir PRs).
+  # Secrets live in the `production` environment (deployments limited to main); this job never
+  # runs for pull requests, so PR code can't reach them.
+  deploy:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://recess.lapis.life
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - name: build bundle (examples excluded)
+        run: |
+          set -euo pipefail
+          bun scripts/build-content.ts --exclude-examples
+          if jq -e '.entries[] | select(.id | startswith("example-"))' src/generated/bundle.json >/dev/null; then
+            echo "::error::bundle contains example- entries; not deploying"; exit 1
+          fi
+      - name: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/wrangler deploy 2>&1 | tee "$RUNNER_TEMP/deploy.log"
+          version=$(grep -oE 'Current Version ID: [0-9a-f-]+' "$RUNNER_TEMP/deploy.log" | awk '{print $4}' | tail -1)
+          echo "Deployed version: \`$version\` ($(jq -r .version src/generated/bundle.json), $(jq '.entries | length' src/generated/bundle.json) entries)" >> "$GITHUB_STEP_SUMMARY"
+      - name: read-only smoke (no stamp, no souvenir)
+        run: |
+          for i in 1 2 3 4 5; do
+            bun scripts/smoke.ts https://recess.lapis.life/mcp --readonly && exit 0
+            sleep 10
+          done
+          exit 1

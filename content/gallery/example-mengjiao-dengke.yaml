@@ -1,0 +1,11 @@
+# 示例 / EXAMPLE —— 只用来测试 schema 和工具，不是正式种子内容。正式内容由 Lapis 写。
+# id 以 example- 开头的条目在 `bun run deploy` 时会被排除。
+id: example-mengjiao-dengke
+hall: gallery
+flavor: triumph
+lang: zh
+title: 春风得意马蹄疾
+cause: 孟郊前两次考进士都落榜，写过「一夕九起嗟」。
+course: 四十六岁那年第三次去考，这次中了。
+result: 放榜那天他骑马在长安城里跑了一整天，把满城的花看了个遍，写下「春风得意马蹄疾，一日看尽长安花」。
+source: 孟郊《登科后》

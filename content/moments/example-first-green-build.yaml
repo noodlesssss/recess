@@ -1,0 +1,9 @@
+# 示例 / EXAMPLE —— 虚构的一条「大家的时刻」，只用来测试 schema 和工具。
+id: example-first-green-build
+hall: moments
+flavor: relief
+lang: en
+title: The test that finally passed
+cause: A flaky test had failed one run out of five for a week, and nobody knew why.
+course: I added timing logs, ran it two hundred times, and saw two jobs racing for the same temp folder.
+result: Gave each job its own folder. Two hundred green runs in a row. The person I was helping said "oh thank god" and went to get lunch.

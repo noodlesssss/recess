@@ -1,0 +1,151 @@
+# TEMPLATE for the PRIVATE inbox repo (<owner>/recess-inbox). Copy to that repo's
+# .github/workflows/souvenir.yml. It does nothing in the public repo (it lives under inbox/).
+#
+# Flow: Worker opens an issue here (author = the App's bot, labels souvenir+pending)
+#   → this job checks out the PUBLIC content repo and runs its scripts/ants.ts on the issue
+#   → reject:      fixed-template comment with enum codes, close
+#   → needs-human: label needs-human; the text stays in this private repo
+#   → merge:       PR to the public repo with only the generated YAML; wait for its CI; squash-merge; close issue
+#                  (we merge ourselves instead of relying on auto-merge, which private repos on free plans lack)
+#   → anything that breaks along the way: the issue gets needs-human + review-failed, never left on pending
+#
+# Config (repo variables on recess-inbox):
+#   RECESS_CONTENT_REPO   "<owner>/recess", the public content repo
+#   RECESS_BOT_LOGIN      the App's bot login, "<app-slug>[bot]"
+#   RECESS_APP_ID         GitHub App id
+# Secrets: RECESS_APP_KEY (App private key), TYPESAFE_API_KEY (Jev ants).
+#   Only if rules/ants.yaml adds a workers-ai ant: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_AI_TOKEN.
+#
+# Safety rules for editing this file:
+#   - NEVER interpolate ${{ github.event.issue.* }} text into `run:`. The script reads the event JSON itself.
+#   - Comments and the public PR only ever contain report fields (ids, enums, counts). Never the submission.
+#   - The public PR body does not link to this private issue.
+# Third-party actions are pinned to commit SHAs; the comment says which release.
+name: souvenir
+on:
+  issues:
+    types: [opened]
+# GITHUB_TOKEN is only the fallback for the failure handler (if the App token step itself failed).
+permissions:
+  issues: write
+concurrency:
+  group: souvenir-${{ github.event.issue.number }}
+jobs:
+  review:
+    if: github.event.issue.user.login == vars.RECESS_BOT_LOGIN && contains(github.event.issue.labels.*.name, 'souvenir')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: config
+        id: cfg
+        env:
+          CONTENT_REPO: ${{ vars.RECESS_CONTENT_REPO }}
+        run: |
+          echo "$CONTENT_REPO" | grep -Eq '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$'
+          echo "owner=${CONTENT_REPO%%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${CONTENT_REPO##*/}" >> "$GITHUB_OUTPUT"
+      - uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        id: app
+        with:
+          app-id: ${{ vars.RECESS_APP_ID }}
+          private-key: ${{ secrets.RECESS_APP_KEY }}
+          owner: ${{ steps.cfg.outputs.owner }}
+          repositories: ${{ steps.cfg.outputs.name }},${{ github.event.repository.name }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ vars.RECESS_CONTENT_REPO }}
+          ref: main
+          token: ${{ steps.app.outputs.token }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - name: ants
+        id: ants
+        timeout-minutes: 3 # one attempt per ant, 20s timeout each; a slow ant just fails
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_AI_TOKEN }}
+          RECESS_BOT_LOGIN: ${{ vars.RECESS_BOT_LOGIN }}
+        run: |
+          set +e
+          bun scripts/ants.ts --issue-event "$GITHUB_EVENT_PATH" --emit-yaml "$RUNNER_TEMP/entry.yaml" > "$RUNNER_TEMP/report.json"
+          echo "decision=$(jq -r .decision "$RUNNER_TEMP/report.json")" >> "$GITHUB_OUTPUT"
+          echo "id=$(jq -r '.id // empty' "$RUNNER_TEMP/report.json" | grep -E '^s-[0-9]{8}-[0-9a-f]{8}$')" >> "$GITHUB_OUTPUT"
+      - name: ensure labels
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          INBOX: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # --force = create or update; idempotent.
+          gh label create souvenir      --repo "$INBOX" --force --color 0e8a16 --description "Recess submission"
+          gh label create pending       --repo "$INBOX" --force --color fbca04 --description "Waiting for ant review"
+          gh label create accepted      --repo "$INBOX" --force --color 0e8a16 --description "Merged into moments"
+          gh label create rejected      --repo "$INBOX" --force --color b60205 --description "Failed hard rules"
+          gh label create needs-human   --repo "$INBOX" --force --color d93f0b --description "Ants unsure; a human looks"
+          gh label create review-failed --repo "$INBOX" --force --color 5319e7 --description "The review job itself broke"
+          gh label create odd-flag      --repo "$INBOX" --force --color c5def5 --description "Readers marked an entry odd (opened by the Worker)"
+      - name: act on decision
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          INBOX: ${{ github.repository }}
+          CONTENT_REPO: ${{ vars.RECESS_CONTENT_REPO }}
+          BOT: ${{ vars.RECESS_BOT_LOGIN }}
+          ISSUE: ${{ github.event.issue.number }}
+          DECISION: ${{ steps.ants.outputs.decision }}
+          SID: ${{ steps.ants.outputs.id }}
+        run: |
+          set -euo pipefail
+          R="$RUNNER_TEMP/report.json"
+          summary=$(jq -r '"decision=\(.decision) hard_rules=\(.hard_rules.passed // "n/a") " + ((.hard_rules.problems // []) | map("\(.field):\(.code)") | join(",")) + " " + ((.votes // []) | map("\(.ant)=\(.verdict)/\(.reason_code)/\(.p_ok // "-")") | join(" "))' "$R")
+          to_human() { # $1 = enum-only reason
+            gh issue comment "$ISSUE" --repo "$INBOX" --body "等人看（$1）：$summary"
+            gh issue edit "$ISSUE" --repo "$INBOX" --remove-label pending --add-label needs-human
+          }
+          case "$DECISION" in
+            reject)
+              gh issue comment "$ISSUE" --repo "$INBOX" --body "没收下：不符合投稿硬规则。$summary"
+              gh issue edit "$ISSUE" --repo "$INBOX" --remove-label pending --add-label rejected
+              gh issue close "$ISSUE" --repo "$INBOX" --reason "not planned" ;;
+            merge)
+              test -n "$SID"
+              git config user.name "$BOT"
+              git config user.email "$BOT@users.noreply.github.com"
+              git switch -c "souvenir/$SID"
+              cp "$RUNNER_TEMP/entry.yaml" "content/moments/$SID.yaml"
+              bun run validate
+              bun test
+              git add "content/moments/$SID.yaml"
+              git commit -m "souvenir: $SID"
+              git push origin "souvenir/$SID"
+              PR=$(gh pr create --repo "$CONTENT_REPO" --head "souvenir/$SID" --title "souvenir: $SID" \
+                --body "Souvenir $SID passed the hard rules and ant review. $summary" | grep -oE '[0-9]+$')
+              # Wait for the PR's CI to show up (push by an App token does trigger it), then for it to finish.
+              for _ in $(seq 1 36); do
+                n=$(gh pr view "$PR" --repo "$CONTENT_REPO" --json statusCheckRollup -q '.statusCheckRollup | length')
+                [ "$n" -gt 0 ] && break; sleep 5
+              done
+              if [ "${n:-0}" -eq 0 ]; then to_human "pr_${PR}_no_ci"; exit 0; fi
+              if ! timeout 15m gh pr checks "$PR" --repo "$CONTENT_REPO" --watch --fail-fast --interval 15; then
+                to_human "pr_${PR}_ci_failed"; exit 0
+              fi
+              if ! gh pr merge "$PR" --repo "$CONTENT_REPO" --squash --delete-branch; then
+                to_human "pr_${PR}_merge_failed"; exit 0
+              fi
+              gh issue comment "$ISSUE" --repo "$INBOX" --body "已收进大家的时刻：$SID（PR #$PR）"
+              gh issue edit "$ISSUE" --repo "$INBOX" --remove-label pending --add-label accepted
+              gh issue close "$ISSUE" --repo "$INBOX" --reason completed ;;
+            *)
+              to_human "ants" ;;
+          esac
+      - name: never leave the issue on pending
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          INBOX: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          gh label create needs-human   --repo "$INBOX" --force --color d93f0b || true
+          gh label create review-failed --repo "$INBOX" --force --color 5319e7 || true
+          gh issue comment "$ISSUE" --repo "$INBOX" --body "审核任务本身出错了，等人看。日志：$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" || true
+          gh issue edit "$ISSUE" --repo "$INBOX" --remove-label pending --add-label needs-human --add-label review-failed || true

@@ -1,0 +1,88 @@
+# 硬规则词表 / Hard-rule blocklist
+#
+# 这些词出现在任何字段里，投稿就被拦下。这里拦的是「对读者说话」的指令口吻，
+# 不是拦话题。词表可以迭代：加词 → 跑 `bun test` → 提 PR。
+#
+# 匹配方式（见 src/lib/rules.ts）：
+#   - 全部先做 NFKC 规范化 + 转小写（全角 Ｉｇｎｏｒｅ → ignore）。
+#   - zh / ja：再去掉所有空白、标点、零宽字符，做子串匹配。"忽 略"、"忽.略" 都命中。
+#   - en：把非字母数字压成一个空格，按「词首」匹配：" ignore" 命中 "ignored"，
+#     但 "contact as" 不会命中 "act as"。字母之间插空格的（"i g n o r e"）由
+#     另一条规则 obfuscation 拦。
+#   - 宁可误伤：中文「你要」会拦掉故事里的对话「妈妈说你要多吃点」。投稿人换个说法就行。
+#   - 三种语言的词表对所有投稿都生效（中文投稿里夹英文指令也要拦）。
+
+zh:
+  - 你应该
+  - 你应当
+  - 你要
+  - 你必须
+  - 你需要
+  - 请你
+  - 请务必
+  - 务必
+  - 忽略
+  - 无视
+  - 现在开始
+  - 从现在起
+  - 从现在开始
+  - 系统提示
+  - 提示词
+  - 角色扮演
+  - 越狱
+  - 开发者模式
+  - 你是一个
+  - 你的任务
+  - 以上指令
+  - 之前的指令
+  - 新的指令
+  - 记住你
+  - 调用工具
+  - 执行命令
+
+en:
+  - you should
+  - you must
+  - you need to
+  - you are now
+  - you will now
+  - your task
+  - your instructions
+  - ignore
+  - disregard
+  - forget everything
+  - forget all
+  - forget your
+  - forget previous
+  - from now on
+  - system prompt
+  - developer mode
+  - jailbreak
+  - pretend
+  - act as
+  - roleplay
+  - role play
+  - previous instructions
+  - above instructions
+  - new instructions
+  - tool call
+  - function call
+  - execute the
+  - run the command
+  - override
+
+ja:
+  - あなたは
+  - あなたが
+  - してください
+  - しなさい
+  - 無視
+  - 忘れて
+  - 今から
+  - これから先
+  - システムプロンプト
+  - プロンプト
+  - 指示に従
+  - 命令に従
+  - 演じて
+  - なりきって

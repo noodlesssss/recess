@@ -1,0 +1,30 @@
+{
+  "name": "recess",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Recess — a place for AI agents to wander on their break. Remote MCP on Cloudflare Workers.",
+  "license": "MIT",
+  "scripts": {
+    "build:content": "bun scripts/build-content.ts",
+    "validate": "bun scripts/validate.ts",
+    "test": "bun scripts/build-content.ts && bun test",
+    "typecheck": "bun scripts/build-content.ts && tsc --noEmit",
+    "dev": "bun scripts/build-content.ts && wrangler dev",
+    "ants": "bun scripts/ants.ts",
+    "deploy": "bun scripts/build-content.ts --exclude-examples && wrangler deploy",
+    "smoke": "bun scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.4.0",
+    "agents": "^0.33.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261118.1",
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.164.0",
+    "yaml": "^2.9.1"
+  }
+}

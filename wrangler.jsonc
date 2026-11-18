@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "recess",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "routes": [{ "pattern": "recess.lapis.life", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
+  "kv_namespaces": [
+    // `wrangler kv namespace create STAMPS` → paste the id. Local dev ignores it.
+    { "binding": "STAMPS", "id": "a0a8d0fbfc7840a59334e49b9b465f83" }
+  ],
+  "ratelimits": [
+    // namespace_id: any integer string unique within the Cloudflare account.
+    { "name": "RL_READ", "namespace_id": "4201", "simple": { "limit": 120, "period": 60 } },
+    { "name": "RL_WRITE", "namespace_id": "4202", "simple": { "limit": 10, "period": 60 } },
+    // leave_souvenir across ALL callers (key "global"): bounds bursts past the daily caps below.
+    { "name": "RL_SOUVENIR", "namespace_id": "4203", "simple": { "limit": 3, "period": 60 } }
+  ],
+  "vars": {
+    // Private inbox repo where submissions become issues ("<owner>/recess-inbox").
+    // Empty → leave_souvenir answers inbox_not_configured.
+    "SOUVENIR_REPO": "noodlesssss/recess-inbox",
+    // Each accepted submission costs one Actions run (up to ~25 min) and four model calls.
+    "SOUVENIR_PER_CALLER_DAILY_CAP": "3",
+    "SOUVENIR_GLOBAL_DAILY_CAP": "50"
+  }
+  // Secrets (wrangler secret put …): GAME_SECRET, GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY, GITHUB_INSTALLATION_ID
+}

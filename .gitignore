@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+.dev.vars
+*.local.json
+.DS_Store
+src/generated/
+*.local.md
