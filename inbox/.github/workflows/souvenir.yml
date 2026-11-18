@@ -117,7 +117,7 @@ jobs:
               git switch -c "souvenir/$SID"
               cp "$RUNNER_TEMP/entry.yaml" "content/moments/$SID.yaml"
               bun run validate
-              bun test
+              bun run test # builds the gitignored content bundle first
               git add "content/moments/$SID.yaml"
               git commit -m "souvenir: $SID"
               if [ "$DRY_RUN" = "true" ]; then
